@@ -1,5 +1,6 @@
 // へぇ〜！雑学クイズ
 const ROUND = 10; // 1回の問題数
+const POINT = 10; // 1問の点数（10問で100点満点）
 const TIME = 15; // 1問の制限時間（秒）
 const $ = (sel) => document.querySelector(sel);
 
@@ -20,10 +21,10 @@ function shuffle(list) {
 
 // ハイスコアは、この端末のブラウザにだけ覚えておく（使えない環境ではなにもしない）
 function loadBest() {
-  try { return JSON.parse(localStorage.getItem("hee-quiz-best") || "{}"); } catch { return {}; }
+  try { return JSON.parse(localStorage.getItem("hee-quiz-best-100") || "{}"); } catch { return {}; }
 }
 function saveBest(best) {
-  try { localStorage.setItem("hee-quiz-best", JSON.stringify(best)); } catch {}
+  try { localStorage.setItem("hee-quiz-best-100", JSON.stringify(best)); } catch {}
 }
 
 // ---------- タイトル ----------
@@ -37,10 +38,11 @@ function renderTitle() {
     b.className = "cat";
     b.dataset.cat = key;
     const n = QUESTIONS.filter((q) => q.cat === key).length;
-    b.innerHTML = `<span class="icon">${c.icon}</span><b>${c.name}</b><small>${n}問${best[key] ? ` ・ 最高 ${best[key]}点` : ""}</small>`;
+    b.innerHTML = `<span class="icon">${c.icon}</span><b>${c.name}</b><small>${n}問${best[key] !== undefined ? ` ・ 最高 ${best[key]}点` : ""}</small>`;
     return b;
   }));
-  $(".best").textContent = best.all ? `ランダム10問の最高記録：${best.all}点` : "";
+  $(".total").textContent = QUESTIONS.length;
+  $(".best").textContent = best.all !== undefined ? `ランダム10問の最高記録：${best.all}点` : "";
 }
 
 document.addEventListener("click", (e) => {
@@ -51,9 +53,30 @@ document.addEventListener("click", (e) => {
 // ---------- 問題 ----------
 let game;
 
+// 「ぜんぶから」は、問題の多いジャンルにかたよらないよう、ジャンルを選んでからその中の1問を出す
+function pick(cat) {
+  if (cat !== "all") return shuffle(QUESTIONS.filter((q) => q.cat === cat)).slice(0, ROUND);
+  const byCat = {};
+  shuffle(QUESTIONS).forEach((q) => (byCat[q.cat] = byCat[q.cat] || []).push(q));
+  const cats = Object.keys(byCat);
+  const list = [];
+  let order = [];
+  while (list.length < ROUND) {
+    if (!order.length) order = shuffle(cats);
+    const q = byCat[order.pop()].pop();
+    if (q) list.push(q);
+  }
+  return list;
+}
+
+// まちがいの選択肢：決まっていればそれを、候補（pool）があればそこから3つ選ぶ
+function wrongChoices(q) {
+  if (q.c) return q.c;
+  return shuffle(q.pool.filter((x) => x !== q.a)).slice(0, 3);
+}
+
 function start(cat) {
-  const pool = cat === "all" ? QUESTIONS : QUESTIONS.filter((q) => q.cat === cat);
-  game = { cat, list: shuffle(pool).slice(0, ROUND), i: 0, score: 0, combo: 0, maxCombo: 0, log: [] };
+  game = { cat, list: pick(cat), i: 0, score: 0, combo: 0, maxCombo: 0, log: [] };
   showScreen("play");
   ask();
 }
@@ -67,7 +90,7 @@ function ask() {
   $(".question").textContent = q.q;
   $(".feedback").hidden = true;
   const box = $(".choices");
-  box.replaceChildren(...shuffle([q.a, ...q.c]).map((text, n) => {
+  box.replaceChildren(...shuffle([q.a, ...wrongChoices(q)]).map((text, n) => {
     const b = document.createElement("button");
     b.className = "choice";
     b.innerHTML = `<span class="key">${n + 1}</span>`;
@@ -104,14 +127,10 @@ function answer(text, button) {
 
   const q = game.list[game.i];
   const ok = text === q.a;
-  const rest = Math.max(0, left);
-  let gained = 0;
   if (ok) {
     game.combo++;
     game.maxCombo = Math.max(game.maxCombo, game.combo);
-    // 正解 100点 ＋ 早さボーナス（最大50点）＋ 連続正解ボーナス（2問目から10点ずつ、最大50点）
-    gained = 100 + Math.round((rest / TIME) * 50) + Math.min(50, (game.combo - 1) * 10);
-    game.score += gained;
+    game.score += POINT;
   } else {
     game.combo = 0;
   }
@@ -130,7 +149,7 @@ function answer(text, button) {
 
   const verdict = $(".verdict");
   verdict.className = "verdict " + (ok ? "ok" : "ng");
-  verdict.textContent = ok ? `⭕ 正解！ +${gained}点` : text === null ? `⏰ 時間切れ… 正解は「${q.a}」` : `❌ ざんねん… 正解は「${q.a}」`;
+  verdict.textContent = ok ? `⭕ 正解！ +${POINT}点` : text === null ? `⏰ 時間切れ… 正解は「${q.a}」` : `❌ ざんねん… 正解は「${q.a}」`;
   $(".note").textContent = "💡 " + q.note;
   $(".next").textContent = game.i + 1 < game.list.length ? "次へ" : "結果を見る";
   $(".feedback").hidden = false;
@@ -166,12 +185,12 @@ function finish() {
   const rank = RANKS.find((r) => right >= Math.round((r.min / 10) * total));
   $(".rank-icon").textContent = rank.icon;
   $(".rank").textContent = rank.name;
-  $(".final").innerHTML = `<b>${game.score}</b> 点<br><small>${total}問中 ${right}問 正解 ・ 最大 ${game.maxCombo}連続</small>`;
+  $(".final").innerHTML = `<b>${game.score}</b> 点 <small>/ ${total * POINT}点</small><br><small>${total}問中 ${right}問 正解 ・ 最大 ${game.maxCombo}連続</small>`;
 
   const best = loadBest();
   const record = $(".record");
-  if (game.score > (best[game.cat] || 0)) {
-    record.textContent = best[game.cat] ? `🎉 自己ベスト更新！（前回まで ${best[game.cat]}点）` : "🎉 はじめての記録！";
+  if (best[game.cat] === undefined || game.score > best[game.cat]) {
+    record.textContent = best[game.cat] !== undefined ? `🎉 自己ベスト更新！（前回まで ${best[game.cat]}点）` : "🎉 はじめての記録！";
     best[game.cat] = game.score;
     saveBest(best);
   } else {
